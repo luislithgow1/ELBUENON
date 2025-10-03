@@ -92,22 +92,37 @@
       text-align: center;
       font-size: 18px;
     }
+    
+    .upload-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+    }
+    
+    .upload-label {
+      font-size: 12px;
+      color: #fff;
+    }
   </style>
 </head>
 <body>
   <div class="scoreboard">
     <!-- Logos -->
     <div class="logos">
-      <div>
+      <div class="upload-container">
         <img id="logoVisitor" class="team-logo" src="" alt="Visitante">
+        <label class="upload-label">Logo Visitante</label>
         <input type="file" id="uploadVisitor" accept="image/*">
       </div>
-      <div>
+      <div class="upload-container">
         <img id="tiktokLogo" class="tiktok-logo" src="" alt="TikTok">
+        <label class="upload-label">Logo TikTok</label>
         <input type="file" id="uploadTiktok" accept="image/*">
       </div>
-      <div>
+      <div class="upload-container">
         <img id="logoHome" class="team-logo" src="" alt="Local">
+        <label class="upload-label">Logo Local</label>
         <input type="file" id="uploadHome" accept="image/*">
       </div>
     </div>
@@ -163,7 +178,14 @@
       measurementId: "G-D2LNRY5WSC"
     };
 
-    const app = firebase.initializeApp(firebaseConfig);
+    // Inicializar Firebase solo si no existe una app ya inicializada
+    let app;
+    try {
+      app = firebase.app();
+    } catch (e) {
+      app = firebase.initializeApp(firebaseConfig);
+    }
+    
     const db = firebase.database();
     const storage = firebase.storage();
 
@@ -182,49 +204,125 @@
       tiktokLogo: document.getElementById("tiktokLogo"),
     };
 
-    // Guardar stats en DB en tiempo real
-    Object.keys(refs).forEach(key => {
-      if (refs[key].tagName === "INPUT" && refs[key].type === "number") {
-        refs[key].addEventListener("input", () => {
-          db.ref("scoreboard/" + key).set(refs[key].value);
-        });
-      }
-    });
-
-    // Escuchar cambios de DB
-    db.ref("scoreboard").on("value", snapshot => {
-      const data = snapshot.val();
-      if (!data) return;
-      Object.keys(data).forEach(key => {
-        if (refs[key] && refs[key].type === "number") {
-          refs[key].value = data[key];
+    // Verificar que todos los elementos existen antes de agregar event listeners
+    if (refs.rVisitor && refs.hVisitor && refs.eVisitor && 
+        refs.rHome && refs.hHome && refs.eHome && 
+        refs.inning && refs.outs) {
+      
+      // Guardar stats en DB en tiempo real
+      Object.keys(refs).forEach(key => {
+        if (refs[key] && refs[key].tagName === "INPUT" && refs[key].type === "number") {
+          refs[key].addEventListener("input", () => {
+            db.ref("scoreboard/" + key).set(refs[key].value)
+              .catch(error => {
+                console.error("Error al guardar en Firebase:", error);
+              });
+          });
         }
       });
-    });
+
+      // Escuchar cambios de DB
+      db.ref("scoreboard").on("value", snapshot => {
+        const data = snapshot.val();
+        if (!data) return;
+        Object.keys(data).forEach(key => {
+          if (refs[key] && refs[key].type === "number") {
+            refs[key].value = data[key];
+          }
+        });
+      }, error => {
+        console.error("Error al leer de Firebase:", error);
+      });
+    }
 
     // Subir imágenes a Firebase Storage
     function uploadLogo(fileInput, path, imgElement) {
       const file = fileInput.files[0];
       if (!file) return;
+      
       const storageRef = storage.ref("logos/" + path);
-      storageRef.put(file).then(() => {
-        storageRef.getDownloadURL().then(url => {
-          db.ref("logos/" + path).set(url);
-        });
+      storageRef.put(file).then(snapshot => {
+        console.log("Imagen subida correctamente:", path);
+        return storageRef.getDownloadURL();
+      }).then(url => {
+        console.log("URL obtenida:", url);
+        // Actualizar la imagen inmediatamente
+        imgElement.src = url;
+        // Guardar la URL en la base de datos
+        return db.ref("logos/" + path).set(url);
+      }).then(() => {
+        console.log("URL guardada en la base de datos:", path);
+      }).catch(error => {
+        console.error("Error al subir imagen:", error);
       });
     }
 
-    document.getElementById("uploadVisitor").addEventListener("change", (e) => uploadLogo(e.target, "visitor", refs.logoVisitor));
-    document.getElementById("uploadHome").addEventListener("change", (e) => uploadLogo(e.target, "home", refs.logoHome));
-    document.getElementById("uploadTiktok").addEventListener("change", (e) => uploadLogo(e.target, "tiktok", refs.tiktokLogo));
+    // Agregar event listeners para subir imágenes
+    const uploadVisitor = document.getElementById("uploadVisitor");
+    const uploadHome = document.getElementById("uploadHome");
+    const uploadTiktok = document.getElementById("uploadTiktok");
+
+    if (uploadVisitor && refs.logoVisitor) {
+      uploadVisitor.addEventListener("change", (e) => uploadLogo(e.target, "visitor", refs.logoVisitor));
+    }
+    if (uploadHome && refs.logoHome) {
+      uploadHome.addEventListener("change", (e) => uploadLogo(e.target, "home", refs.logoHome));
+    }
+    if (uploadTiktok && refs.tiktokLogo) {
+      uploadTiktok.addEventListener("change", (e) => uploadLogo(e.target, "tiktok", refs.tiktokLogo));
+    }
 
     // Escuchar cambios en logos desde DB
     db.ref("logos").on("value", snapshot => {
       const logos = snapshot.val();
       if (!logos) return;
-      if (logos.visitor) refs.logoVisitor.src = logos.visitor;
-      if (logos.home) refs.logoHome.src = logos.home;
-      if (logos.tiktok) refs.tiktokLogo.src = logos.tiktok;
+      
+      if (logos.visitor && refs.logoVisitor) {
+        refs.logoVisitor.src = logos.visitor;
+      }
+      if (logos.home && refs.logoHome) {
+        refs.logoHome.src = logos.home;
+      }
+      if (logos.tiktok && refs.tiktokLogo) {
+        refs.tiktokLogo.src = logos.tiktok;
+      }
+    }, error => {
+      console.error("Error al cargar logos:", error);
+    });
+
+    // Cargar datos iniciales al iniciar la página
+    window.addEventListener('DOMContentLoaded', () => {
+      // Cargar estadísticas
+      db.ref("scoreboard").once("value").then(snapshot => {
+        const data = snapshot.val();
+        if (data) {
+          Object.keys(data).forEach(key => {
+            if (refs[key] && refs[key].type === "number") {
+              refs[key].value = data[key];
+            }
+          });
+        }
+      }).catch(error => {
+        console.error("Error al cargar datos iniciales:", error);
+      });
+
+      // Cargar logos
+      db.ref("logos").once("value").then(snapshot => {
+        const logos = snapshot.val();
+        if (logos) {
+          if (logos.visitor && refs.logoVisitor) {
+            refs.logoVisitor.src = logos.visitor;
+          }
+          if (logos.home && refs.logoHome) {
+            refs.logoHome.src = logos.home;
+          }
+          if (logos.tiktok && refs.tiktokLogo) {
+            refs.tiktokLogo.src = logos.tiktok;
+          }
+        }
+      }).catch(error => {
+        console.error("Error al cargar logos iniciales:", error);
+      });
     });
   </script>
 </body>
